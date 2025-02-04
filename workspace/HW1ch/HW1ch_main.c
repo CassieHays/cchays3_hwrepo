@@ -49,6 +49,7 @@ float frequency = 0.05;
 float offset = 0.25;
 int32_t timeint = 0;
 float satvalue = 0; // cch: p8 adding another global variable
+uint16_t step = 0;  // cch: P10 Keeps track of LED chase sequence
 
 void main(void)
 {
@@ -256,7 +257,7 @@ void main(void)
     // Configure CPU-Timer 0, 1, and 2 to interrupt every given period:
     // 200MHz CPU Freq,                       Period (in uSeconds)
     ConfigCpuTimer(&CpuTimer0, LAUNCHPAD_CPU_FREQUENCY, 10000);
-    ConfigCpuTimer(&CpuTimer1, LAUNCHPAD_CPU_FREQUENCY, 20000);
+    ConfigCpuTimer(&CpuTimer1, LAUNCHPAD_CPU_FREQUENCY, 200000);
     ConfigCpuTimer(&CpuTimer2, LAUNCHPAD_CPU_FREQUENCY, 50000); //ch: P5 changed the frequency to 50ms
 
     // Enable CpuTimer Interrupt bit TIE
@@ -360,20 +361,92 @@ __interrupt void cpu_timer1_isr(void)
 	
 	
     CpuTimer1.InterruptCount++;
+// cch: P10 Led Chase
 
-// cch: P10 create a left arrow when button 2 is pressed
-    if (GpioDataRegs.GPADAT.bit.GPIO5 == 0) {
-            GpioDataRegs.GPBTOGGLE.bit.GPIO61 = 1; // cch: turn on and off LED 12 (GPIO61, GPB)
-            GpioDataRegs.GPETOGGLE.bit.GPIO157 = 1; // cch: turn on and off LED 13 (GPIO157, GPE)
-        }
-// cch: P10 create a right arrow when button 3 is pressed
-    if (GpioDataRegs.GPADAT.bit.GPIO6 == 0) {
-                GpioDataRegs.GPETOGGLE.bit.GPIO158 = 1; // cch: turn on and off LED 14 (GPIO158, GPE)
-                GpioDataRegs.GPETOGGLE.bit.GPIO159 = 1; // cch: turn on and off LED 15 (GPIO159, GPE)
-        }
+    switch (step) {
+        case 0:
+            GpioDataRegs.GPDCLEAR.bit.GPIO111 = 1; // cch: turn off LED 5
+            GpioDataRegs.GPASET.bit.GPIO22 = 1;  // Turn on LED 1
+            break;
+        case 1:
+            GpioDataRegs.GPACLEAR.bit.GPIO22 = 1; // Turn off LED 1
+            GpioDataRegs.GPCSET.bit.GPIO94 = 1;   // Turn on LED 2
+            break;
+        case 2:
+            GpioDataRegs.GPCCLEAR.bit.GPIO94 = 1; // Turn off LED 2
+            GpioDataRegs.GPCSET.bit.GPIO95 = 1;   // Turn on LED 3
+            break;
+        case 3:
+            GpioDataRegs.GPCCLEAR.bit.GPIO95 = 1; // Turn off LED 3
+            GpioDataRegs.GPDSET.bit.GPIO97 = 1; // cch: turn on LED 4
+            break;
+        case 4:
+            GpioDataRegs.GPDCLEAR.bit.GPIO97 = 1; // cch: turn off LED 4
+            GpioDataRegs.GPDSET.bit.GPIO111 = 1; // cch: turn on LED 5
+            break;
+        default:
+            break;
+    }
+
+    step++;  // cch: P10 move to the next LED in the sequence
+    if (step > 4) step = 0; // cch: reset step to loop the pattern
+
+    PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;  // cch: acknowledge interrupt
+
+
+//// cch: P10 create a left arrow when button 3 is pressed (LED: 4,6,7,8,9,10,14)
+//    if (GpioDataRegs.GPADAT.bit.GPIO6 == 0) {
+//            GpioDataRegs.GPDSET.bit.GPIO97 = 1; // cch: turn on LED 4
+//            GpioDataRegs.GPESET.bit.GPIO130 = 1; // cch: turn on LED 6
+//            GpioDataRegs.GPESET.bit.GPIO131 = 1; // cch: turn on LED 7
+//            GpioDataRegs.GPASET.bit.GPIO25 = 1; // cch: turn on LED 8
+//            GpioDataRegs.GPASET.bit.GPIO26 = 1; // cch: turn on LED 9
+//            GpioDataRegs.GPASET.bit.GPIO27 = 1; // cch: turn on LED 10
+//            GpioDataRegs.GPESET.bit.GPIO158 = 1; // cch: turn on LED 14
+//    }
+//
+//// cch: P10 create a right arrow when button 2 is pressed (LED: 2,6,7,8,9,10,12)
+//    else if (GpioDataRegs.GPADAT.bit.GPIO5 == 0) {
+//            GpioDataRegs.GPCSET.bit.GPIO94 = 1; // cch: turn on LED 2
+//            GpioDataRegs.GPESET.bit.GPIO130 = 1; // cch: turn on LED 6
+//            GpioDataRegs.GPESET.bit.GPIO131 = 1; // cch: turn on LED 7
+//            GpioDataRegs.GPASET.bit.GPIO25 = 1; // cch: turn on LED 8
+//            GpioDataRegs.GPASET.bit.GPIO26 = 1; // cch: turn on LED 9
+//            GpioDataRegs.GPASET.bit.GPIO27 = 1; // cch: turn on LED 10
+//            GpioDataRegs.GPBSET.bit.GPIO61 = 1; // cch: turn on LED 12
+//    }
+//
+//// cch: P10 turn off LEDs when neither button is pressed
+//     else {
+//           GpioDataRegs.GPCCLEAR.bit.GPIO94 = 1; // cch: turn off LED 2
+//           GpioDataRegs.GPDCLEAR.bit.GPIO97 = 1; // cch: turn off LED 4
+//           GpioDataRegs.GPECLEAR.bit.GPIO130 = 1; // cch: turn off LED 6
+//           GpioDataRegs.GPECLEAR.bit.GPIO131 = 1; // cch: turn off LED 7
+//           GpioDataRegs.GPACLEAR.bit.GPIO25 = 1; // cch: turn off LED 8
+//           GpioDataRegs.GPACLEAR.bit.GPIO26 = 1; // cch: turn off LED 9
+//           GpioDataRegs.GPACLEAR.bit.GPIO27 = 1; // cch: turn off LED 10
+//           GpioDataRegs.GPBCLEAR.bit.GPIO61 = 1; // cch: turn off LED 12
+//           GpioDataRegs.GPECLEAR.bit.GPIO158 = 1; // cch: turn off LED 14
+//        }
+
+
+//GpioDataRegs.GPASET.bit.GPIO22 = 1; // cch: turn on LED 1
+//GpioDataRegs.GPCSET.bit.GPIO94 = 1; // cch: turn on LED 2
+//GpioDataRegs.GPCSET.bit.GPIO95 = 1; // cch: turn on LED 3
+//GpioDataRegs.GPDSET.bit.GPIO97 = 1; // cch: turn on LED 4
+//GpioDataRegs.GPDSET.bit.GPIO111 = 1; // cch: turn on LED 5
+//GpioDataRegs.GPESET.bit.GPIO130 = 1; // cch: turn on LED 6
+//GpioDataRegs.GPESET.bit.GPIO131 = 1; // cch: turn on LED 7
+//GpioDataRegs.GPASET.bit.GPIO25 = 1; // cch: turn on LED 8
+//GpioDataRegs.GPASET.bit.GPIO26 = 1; // cch: turn on LED 9
+//GpioDataRegs.GPASET.bit.GPIO27 = 1; // cch: turn on LED 10
+//GpioDataRegs.GPBSET.bit.GPIO60 = 1; // cch: turn on LED 11
+//GpioDataRegs.GPBSET.bit.GPIO61 = 1; // cch: turn on LED 12
+//GpioDataRegs.GPESET.bit.GPIO157 = 1; // cch: turn on LED 13
+//GpioDataRegs.GPESET.bit.GPIO158 = 1; // cch: turn on LED 14
+
 
 }
-
 // cpu_timer2_isr CPU Timer2 ISR
 __interrupt void cpu_timer2_isr(void)
 {
@@ -382,34 +455,34 @@ __interrupt void cpu_timer2_isr(void)
     GpioDataRegs.GPATOGGLE.bit.GPIO31 = 1;
 
     CpuTimer2.InterruptCount++;
-// cch: P9 create code to toggle on and off LED10 and 11 every 100ms
-    if ((CpuTimer2.InterruptCount % 2) == 0) { // cch: changed modulus to be every 100ms when frequency is 50ms
-        GpioDataRegs.GPATOGGLE.bit.GPIO27 = 1; // cch: turn on and off LED 10 (GPIO27, GPA)
-        GpioDataRegs.GPBTOGGLE.bit.GPIO60 = 1; // cch: turn on and off LED 11 (GPIO60, GPB)
-    }
-
-// cch: P9 push button 1 is pressed then LEDs turn on and off when not pushed
-    if (GpioDataRegs.GPADAT.bit.GPIO4 == 0) {
-        GpioDataRegs.GPBTOGGLE.bit.GPIO61 = 1; // cch: turn on and off LED 12 (GPIO61, GPB)
-        GpioDataRegs.GPETOGGLE.bit.GPIO157 = 1; // cch: turn on and off LED 13 (GPIO157, GPE)
-    } else {
-       GpioDataRegs.GPBCLEAR.bit.GPIO61 = 1; // cch: turn LED 12 (GPIO61, GPB)
-       GpioDataRegs.GPECLEAR.bit.GPIO157 = 1; // cch: turn off LED 13 (GPIO157, GPE)
-    }
-
-// cch: P9 push button 4 is pressed then LEDs turn on and off when not pushed
-    if (GpioDataRegs.GPADAT.bit.GPIO7 == 0) {
-            GpioDataRegs.GPETOGGLE.bit.GPIO158 = 1; // cch: turn on and off LED 14 (GPIO158, GPE)
-            GpioDataRegs.GPETOGGLE.bit.GPIO159 = 1; // cch: turn on and off LED 15 (GPIO159, GPE)
-    } else {
-        GpioDataRegs.GPECLEAR.bit.GPIO158 = 1; // cch: turn off LED 14 (GPIO158, GPE)
-        GpioDataRegs.GPECLEAR.bit.GPIO159 = 1; // cch: turn off LED 15 (GPIO159, GPE)
-    }
-
-// cch: P5 changed the interrupt modulus to 5 instead of  50 to get it to print after 5 times of a 50ms timer frequency
-	if ((CpuTimer2.InterruptCount % 5) == 0) {
-		UARTPrint = 1;
-	}
+//// cch: P9 create code to toggle on and off LED10 and 11 every 100ms
+//    if ((CpuTimer2.InterruptCount % 2) == 0) { // cch: changed modulus to be every 100ms when frequency is 50ms
+//        GpioDataRegs.GPATOGGLE.bit.GPIO27 = 1; // cch: turn on and off LED 10 (GPIO27, GPA)
+//        GpioDataRegs.GPBTOGGLE.bit.GPIO60 = 1; // cch: turn on and off LED 11 (GPIO60, GPB)
+//    }
+//
+//// cch: P9 push button 1 is pressed then LEDs turn on and off when not pushed
+//    if (GpioDataRegs.GPADAT.bit.GPIO4 == 0) {
+//        GpioDataRegs.GPBTOGGLE.bit.GPIO61 = 1; // cch: turn on and off LED 12 (GPIO61, GPB)
+//        GpioDataRegs.GPETOGGLE.bit.GPIO157 = 1; // cch: turn on and off LED 13 (GPIO157, GPE)
+//    } else {
+//       GpioDataRegs.GPBCLEAR.bit.GPIO61 = 1; // cch: turn LED 12 (GPIO61, GPB)
+//       GpioDataRegs.GPECLEAR.bit.GPIO157 = 1; // cch: turn off LED 13 (GPIO157, GPE)
+//    }
+//
+//// cch: P9 push button 4 is pressed then LEDs turn on and off when not pushed
+//    if (GpioDataRegs.GPADAT.bit.GPIO7 == 0) {
+//            GpioDataRegs.GPETOGGLE.bit.GPIO158 = 1; // cch: turn on and off LED 14 (GPIO158, GPE)
+//            GpioDataRegs.GPETOGGLE.bit.GPIO159 = 1; // cch: turn on and off LED 15 (GPIO159, GPE)
+//    } else {
+//        GpioDataRegs.GPECLEAR.bit.GPIO158 = 1; // cch: turn off LED 14 (GPIO158, GPE)
+//        GpioDataRegs.GPECLEAR.bit.GPIO159 = 1; // cch: turn off LED 15 (GPIO159, GPE)
+//    }
+//
+//// cch: P5 changed the interrupt modulus to 5 instead of  50 to get it to print after 5 times of a 50ms timer frequency
+//	if ((CpuTimer2.InterruptCount % 5) == 0) {
+//		UARTPrint = 1;
+//	}
 }
 
 float saturate ( float input, float saturation_limit) // cch: creating a function names saturate with parameters "float inputs" and "float saturation_limit"
