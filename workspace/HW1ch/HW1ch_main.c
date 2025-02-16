@@ -302,7 +302,10 @@ void main(void)
                 // cch: modify/create new serial_printf statement to print outputs for p8
                 serial_printf(&SerialA, "Timeint = %ld, Time = %.2f, Input = %.3f, SatOut = %.2f\r\n", timeint,time,sinvalue,satvalue);
 				//serial_printf(&SerialA,"Num Timer2:%ld Num SerialRX: %ld\r\n",CpuTimer2.InterruptCount,numRXA);
-            UARTPrint = 0;
+
+              // cch: P4 UARTPrint has to be set to zero to prevent multiple prints until the 50th timer2 interrupt
+              // cch: P4 This makes it stay on the periodic rate and not continuous within the while loop
+                UARTPrint = 0;
         }
     }
 }
