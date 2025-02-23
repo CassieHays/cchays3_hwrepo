@@ -32,6 +32,7 @@ __interrupt void cpu_timer0_isr(void);
 __interrupt void cpu_timer1_isr(void);
 __interrupt void cpu_timer2_isr(void);
 __interrupt void SWI_isr(void);
+__interrupt void ADCA_ISR (void);
 
 // Count variables
 uint32_t numTimer0calls = 0;
@@ -41,6 +42,17 @@ uint16_t UARTPrint = 0;
 uint16_t LEDdisplaynum = 0;
 uint16_t countup = 0; //CH - Define countup as a 16bit variable and start it at 0
 
+uint16_t adcResult = 0;      //CH - Global 16-bit variable for raw ADCINA4 reading
+float adcVoltage = 0.0f;      //CH - Global float for scaled voltage (0V to 3V)
+int32_t adcaCount = 0;  //CH - Count variable
+
+//CH - Add global variables for the joystick
+uint16_t adcResult_Photo = 0;
+uint16_t adcResult_JoyX = 0;
+uint16_t adcResult_JoyY = 0;
+float voltage_Photo = 0.0f;
+float voltage_JoyX = 0.0f;
+float voltage_JoyY = 0.0f;
 
 void main(void)
 {
@@ -238,6 +250,8 @@ void main(void)
     PieVectTable.SCID_TX_INT = &TXDINT_data_sent;
 
     PieVectTable.EMIF_ERROR_INT = &SWI_isr;
+
+    PieVectTable.ADCA1_INT = &ADCA_ISR; //CH - Q3 Assign to memory address of ISR function
     EDIS;    // This is needed to disable write to EALLOW protected registers
 
 
@@ -284,6 +298,63 @@ void main(void)
     GpioCtrlRegs.GPAPUD.bit.GPIO22 = 1; // For EPWM12A
     EDIS;
 
+//CH - Q3 Set-up code for commanding ADCA
+    EALLOW;
+    EPwm4Regs.ETSEL.bit.SOCAEN = 0; // Disable SOC on A group
+    EPwm4Regs.TBCTL.bit.CTRMODE = 3; // freeze counter
+
+    // CH - 4 = Event occurs when TBCTR = TBPRD
+    EPwm4Regs.ETSEL.bit.SOCASEL = 2; // Select Event when counter equal to PRD
+
+    // CH - 1 = Generate pulse on the first event
+    EPwm4Regs.ETPS.bit.SOCAPRD = 1; // Generate pulse on 1st event (“pulse” is the same as “trigger”)
+    EPwm4Regs.TBCTR = 0x0; // Clear counter
+    EPwm4Regs.TBPHS.bit.TBPHS = 0x0000; // Phase is 0
+    EPwm4Regs.TBCTL.bit.PHSEN = 0; // Disable phase loading
+    EPwm4Regs.TBCTL.bit.CLKDIV = 0; // divide by 1 50Mhz Clock
+
+    //CH - TBPRD = (Desired Period * Clock Frequency) - 1 = (0.001 * 50,000,000) = 50000
+    EPwm4Regs.TBPRD = 50000; // Set Period to 1ms sample. Input clock is 50MHz.
+    // Notice here that we are not setting CMPA or CMPB because we are not using the PWM signal
+    EPwm4Regs.ETSEL.bit.SOCAEN = 1; //enable SOCA
+
+    //CH - Unfreeze and enter up-count mode
+    EPwm4Regs.TBCTL.bit.CTRMODE = 0; //unfreeze, and enter up count mode
+    EDIS;
+
+//CH - Q3 Retrieve default calibration values for ADCA inin the ROM
+    EALLOW;
+    //write configurations for ADCA
+    AdcaRegs.ADCCTL2.bit.PRESCALE = 6; //set ADCCLK divider to /4
+    AdcSetMode(ADC_ADCA, ADC_RESOLUTION_12BIT, ADC_SIGNALMODE_SINGLE); //read calibration settings
+    //Set pulse positions to late
+    AdcaRegs.ADCCTL1.bit.INTPULSEPOS = 1;
+    //power up the ADCs
+    AdcaRegs.ADCCTL1.bit.ADCPWDNZ = 1;
+    //delay for 1ms to allow ADC time to power up
+    DELAY_US(1000);
+    //Select the channels to convert and end of conversion flag
+    //ADCA
+
+    //CH - SOC0 will convert ADCINA4
+    AdcaRegs.ADCSOC0CTL.bit.CHSEL = 4;//SOC0 will convert Channel you choose Does not have to be A0
+    AdcaRegs.ADCSOC0CTL.bit.ACQPS = 99; //sample window is acqps + 1 SYSCLK cycles = 500ns
+
+    //CH - EPWM4 SOCA trigger
+    AdcaRegs.ADCSOC0CTL.bit.TRIGSEL = 11;// EPWM4 ADCSOCA
+    AdcaRegs.ADCSOC1CTL.bit.CHSEL = 2;//SOC1 will conv Channel you choose Does not have to be A1
+    AdcaRegs.ADCSOC1CTL.bit.ACQPS = 99; //sample window is acqps + 1 SYSCLK cycles = 500ns
+    AdcaRegs.ADCSOC1CTL.bit.TRIGSEL = 11;// EPWM4 ADCSOCA
+    AdcaRegs.ADCSOC2CTL.bit.CHSEL = 3;//SOC2 will conv Channel you choose Does not have to be A2
+    AdcaRegs.ADCSOC2CTL.bit.ACQPS = 99; //sample window is acqps + 1 SYSCLK cycles = 500ns
+    AdcaRegs.ADCSOC2CTL.bit.TRIGSEL = 11;// EPWM4 ADCSOCA
+
+    //CH - Set INT1 to trigger after SOC0 completes
+    AdcaRegs.ADCINTSEL1N2.bit.INT1SEL= 2;//set to last or only SOC that is converted and it will set INT1 flag ADCA1
+    AdcaRegs.ADCINTSEL1N2.bit.INT1E = 1; //enable INT1 flag
+    AdcaRegs.ADCINTFLGCLR.bit.ADCINT1 = 1; //make sure INT1 flag is cleared
+    EDIS;
+
     // Enable CPU int1 which is connected to CPU-Timer 0, CPU int13
     // which is connected to CPU-Timer 1, and CPU int 14, which is connected
     // to CPU-Timer 2:  int 12 is for the SWI.  
@@ -294,6 +365,8 @@ void main(void)
     IER |= M_INT13;
     IER |= M_INT14;
 
+    //CH - Q3 Enable ADCA1 in the PIE: Group 1 interrupt 1
+    PieCtrlRegs.PIEIER1.bit.INTx1 = 1;
     // Enable TINT0 in the PIE: Group 1 interrupt 7
     PieCtrlRegs.PIEIER1.bit.INTx7 = 1;
     // Enable SWI in the PIE: Group 12 interrupt 9
@@ -308,12 +381,13 @@ void main(void)
     while(1)
     {
         if (UARTPrint == 1 ) {
-                serial_printf(&SerialA,"Num Timer2:%ld Num SerialRX: %ld\r\n",CpuTimer2.InterruptCount,numRXA);
+            //serial_printf(&SerialA,"Num Timer2:%ld Num SerialRX: %ld\r\n",CpuTimer2.InterruptCount,numRXA);
+//            serial_printf(&SerialA, "ADC Voltage: %0.3f V\r\n", adcVoltage);
+            serial_printf(&SerialA,"Photo: %.3f V | Joystick X: %.3f V | Joystick Y: %.3f V\r\n",voltage_Photo, voltage_JoyX, voltage_JoyY);
             UARTPrint = 0;
         }
     }
 }
-
 
 // SWI_isr,  Using this interrupt as a Software started interrupt
 __interrupt void SWI_isr(void) {
@@ -379,25 +453,91 @@ __interrupt void cpu_timer2_isr(void)
 
     CpuTimer2.InterruptCount++;
 
-    if ((CpuTimer2.InterruptCount % 1) == 0) {
-        UARTPrint = 1;
-    }
+//    if ((CpuTimer2.InterruptCount % 1) == 0) {
+//        UARTPrint = 1;
+//    }
 
-// CH - Making LED1 Brighten and Dim
-    if (countup == 1) // CH - Check if we are counting up
-    {
-        EPwm12Regs.CMPA.bit.CMPA = EPwm12Regs.CMPA.bit.CMPA + 3; // CH - Increment up (by 3 to make it go faster)
-        if (EPwm12Regs.CMPA.bit.CMPA >= EPwm12Regs.TBPRD) // CH - Check that it is not above the period value
-        {
-            countup = 0; // CH - Set to zero to switch direction
-        }
-    }
-    else if (countup == 0)
-    {
-        EPwm12Regs.CMPA.bit.CMPA = EPwm12Regs.CMPA.bit.CMPA - 3; // CH - Increment down (by 3 too make it go faster)
-        if (EPwm12Regs.CMPA.bit.CMPA <= 3) // CH - Check that it is not below 0 (changed to 3 or else it could go negative)
-        {
-            countup = 1; // CH - Change direction
-        }
-    }
+// CH - Q2 Making LED1 Brighten and Dim
+//    if (countup == 1) // CH - Check if we are counting up
+//    {
+//        EPwm12Regs.CMPA.bit.CMPA = EPwm12Regs.CMPA.bit.CMPA + 3; // CH - Increment up (by 3 to make it go faster)
+//        if (EPwm12Regs.CMPA.bit.CMPA >= EPwm12Regs.TBPRD) // CH - Check that it is not above the period value
+//        {
+//            countup = 0; // CH - Set to zero to switch direction
+//        }
+//    }
+//    else if (countup == 0)
+//    {
+//        EPwm12Regs.CMPA.bit.CMPA = EPwm12Regs.CMPA.bit.CMPA - 3; // CH - Increment down (by 3 too make it go faster)
+//        if (EPwm12Regs.CMPA.bit.CMPA <= 3) // CH - Check that it is not below 0 (changed to 3 or else it could go negative)
+//        {
+//            countup = 1; // CH - Change direction
+//        }
+//    }
+}
+
+//CH - Q3 ADCA1 interrupt function
+//adca1 pie interrupt
+__interrupt void ADCA_ISR (void)
+{
+       //CH - Read the 12-bit ADC result from ADCINA4 (assumed to be on SOC0)
+//       adcResult = AdcaResultRegs.ADCRESULT0; //UNCOMMENT FOR Q3
+       //CH - Read ADC results Q4
+       adcResult_Photo = AdcaResultRegs.ADCRESULT0; // SOC0: ADCINA4
+       adcResult_JoyY = AdcaResultRegs.ADCRESULT1;  // SOC1: ADCINA2
+       adcResult_JoyX = AdcaResultRegs.ADCRESULT2;  // SOC2: ADCINA3
+
+       //CH - Convert the raw ADC value to voltage (scale: 3.0V/4096)
+       adcVoltage = ((float)adcResult) * (3.0f / 4096.0f);
+       //CH - Convert to voltages (0–3V)
+       voltage_Photo = ((float)adcResult_Photo) * (3.0f / 4096.0f);
+       voltage_JoyX = ((float)adcResult_JoyX) * (3.0f / 4096.0f);
+       voltage_JoyY = ((float)adcResult_JoyY) * (3.0f / 4096.0f);
+
+       //CH - Update LED direction indicators based on joystick voltage thresholds
+       float threshold_low = 1.0f;  // ~Low threshold
+       float threshold_high = 2.0f; // ~High threshold
+
+       //CH - Clear all direction LEDs first
+           GpioDataRegs.GPACLEAR.bit.GPIO25 = 1;  // LED8
+           GpioDataRegs.GPCCLEAR.bit.GPIO94 = 1;  // LED2
+           GpioDataRegs.GPCCLEAR.bit.GPIO95 = 1;  // LED3
+           GpioDataRegs.GPDCLEAR.bit.GPIO97 = 1;  // LED4
+           GpioDataRegs.GPDCLEAR.bit.GPIO111 = 1; // LED5
+           GpioDataRegs.GPECLEAR.bit.GPIO157 = 1; // LED13
+           GpioDataRegs.GPECLEAR.bit.GPIO130 = 1;  // LED6
+           GpioDataRegs.GPACLEAR.bit.GPIO27 = 1;  // LED10
+
+           //CH - Joystick X-axis direction
+           if (voltage_JoyX < threshold_low) {
+               GpioDataRegs.GPASET.bit.GPIO27 = 1;  //CH - LED10 (Right)
+           } else if (voltage_JoyX > threshold_high) {
+               GpioDataRegs.GPESET.bit.GPIO130 = 1;  //CH - LED6 (Left)
+           } else {
+               GpioDataRegs.GPASET.bit.GPIO25 = 1;  //CH - LED8 (Center X)
+           }
+
+           //CH - Joystick Y-axis direction
+           if (voltage_JoyY < threshold_low) {
+               GpioDataRegs.GPESET.bit.GPIO157 = 1;  //CH - LED13 (Down)
+           } else if (voltage_JoyY > threshold_high) {
+               GpioDataRegs.GPCSET.bit.GPIO95 = 1;   //CH - LED3 (Up)
+           } else {
+               GpioDataRegs.GPASET.bit.GPIO25 = 1;   //CH - LED8 (Center Y)
+           }
+
+       //CH - Print voltage every 100 conversions (~100ms)
+       adcaCount++;
+
+       //CH - Scale ADC result to PWM duty cycle
+       EPwm12Regs.CMPA.bit.CMPA = (uint16_t)(((float)adcResult / 4095.0f) * EPwm12Regs.TBPRD);
+
+       if (adcaCount >= 100) {
+           UARTPrint = 1;   //CH - Set flag to print in main loop
+           adcaCount = 0;   //CH - Reset counter
+       }
+
+       // Clear ADC interrupt flags
+       AdcaRegs.ADCINTFLGCLR.bit.ADCINT1 = 1;
+       PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;
 }
