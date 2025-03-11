@@ -147,6 +147,7 @@ __interrupt void cpu_timer0_isr(void);
 __interrupt void cpu_timer1_isr(void);
 __interrupt void cpu_timer2_isr(void);
 __interrupt void SWI_isr(void);
+__interrupt void SPIB_isr(void);
 
 // Count variables
 uint32_t numTimer0calls = 0;
@@ -159,17 +160,6 @@ int16_t spivalue2 = 0;
 int32_t GyroCount = 0;
 int16_t gyroz_raw = 0;
 
-__interrupt void SPIB_isr(void){
-       GyroCount ++; //CCH - interrupt counter increment
-       spivalue1 = SpibRegs.SPIRXBUF; // Read first 16 bit value off RX FIFO. Probably is zero since no chip
-       spivalue2 = SpibRegs.SPIRXBUF; // Read second 16 bit value off RX FIFO. Again probably zero
-       gyroz_raw = spivalue2; //CCH - set up value for gyroz_raw
-       GpioDataRegs.GPCSET.bit.GPIO66 = 1; // Set GPIO 66 high to end Slave Select. Now to Scope. Later to deselect MPU9250.
-       // Later when actually communicating with the MPU9250 do something with the data. Now do nothing.
-       SpibRegs.SPIFFRX.bit.RXFFOVFCLR = 1; // Clear Overflow flag just in case of an overflow
-       SpibRegs.SPIFFRX.bit.RXFFINTCLR = 1; // Clear RX FIFO Interrupt flag so next interrupt will happen
-       PieCtrlRegs.PIEACK.all = PIEACK_GROUP6; // Acknowledge INT6 PIE interrupt
-}
 //CCH - Variables for hw3 E2
 uint32_t song_index = 0;
 
@@ -398,7 +388,7 @@ void main(void)
     GPIO_SetupPinMux(66, GPIO_MUX_CPU1, 0); // Set as GPIO66 and used as MPU-9250 SS
     GPIO_SetupPinOptions(66, GPIO_OUTPUT, GPIO_PUSHPULL); // Make GPIO66 an Output Pin
     GpioDataRegs.GPCSET.bit.GPIO66 = 1; //Initially Set GPIO66/SS High so MPU-9250 is not selected
-    GPIO_SetupPinMux(63, GPIO_MUX_CPU1, 15); //Set GPIO63 pin to SPISIMOB   7?
+    GPIO_SetupPinMux(63, GPIO_MUX_CPU1, 15); //Set GPIO63 pin to SPISIMOB
     GPIO_SetupPinMux(64, GPIO_MUX_CPU1, 15); //Set GPIO64 pin to SPISOMIB
     GPIO_SetupPinMux(65, GPIO_MUX_CPU1, 15); //Set GPIO65 pin to SPICLKB
     EALLOW;
@@ -515,40 +505,43 @@ __interrupt void cpu_timer0_isr(void)
 
     numTimer0calls++;
 
-    //    if ((numTimer0calls%50) == 0) {
-    //        PieCtrlRegs.PIEIFR12.bit.INTx9 = 1;  // Manually cause the interrupt for the SWI
-    //    }
-
-    //CCH - E4 alternate code
-    GpioDataRegs.GPCCLEAR.bit.GPIO66 = 1; // Clear GPIO66 Low to select MPU9250 chip
-    SpibRegs.SPIFFRX.bit.RXFFIL = 2; // Issue the SPIB_RX_INT when two values are in the RX FIFO
-    SpibRegs.SPITXBUF = (0x8000 |0x4600); // the 0x8000 set the read bit and 46 GYRO_YOUT_L
-    SpibRegs.SPITXBUF = 0x0000; // Send 16 zeros in order that we receive the 16 GyroZ reading
-
-
-        if (GyroCount % 100 == 0) {
-            UARTPrint = 1;
+        if ((numTimer0calls%50) == 0) {
+            PieCtrlRegs.PIEIFR12.bit.INTx9 = 1;  // Manually cause the interrupt for the SWI
         }
-        ////  Clear GPIO66 Low to act as a Slave Select. Right now, just to scope. Later to select MPU9250 chip
-        //    GpioDataRegs.GPCCLEAR.bit.GPIO66 = 1;
-        //    SpibRegs.SPIFFRX.bit.RXFFIL = 2; // Issue the SPIB_RX_INT when two values are in the RX FIFO
-        //    SpibRegs.SPITXBUF = 0x4A3B; // 0x4A3B and 0xB517 have no special meaning. Wanted to send
-        //    SpibRegs.SPITXBUF = 0xB517; // something so you can see the pattern on the Oscilloscope
-        //
-        //    if ((numTimer0calls%250) == 0) {
-        //        displayLEDletter(LEDdisplaynum);
-        //        LEDdisplaynum++;
-        //        if (LEDdisplaynum == 0xFFFF) {  // prevent roll over exception
-        //            LEDdisplaynum = 0;
-        //        }
 
-    // Blink LaunchPad Red LED
-    GpioDataRegs.GPBTOGGLE.bit.GPIO34 = 1;
+        //CCH - E4 alternate code
+        GpioDataRegs.GPCCLEAR.bit.GPIO66 = 1; // Clear GPIO66 Low to select MPU9250 chip
+        SpibRegs.SPIFFRX.bit.RXFFIL = 2; // Issue the SPIB_RX_INT when two values are in the RX FIFO
+        SpibRegs.SPITXBUF = (0x8000 |0x4600); // the 0x8000 set the read bit and 46 GYRO_YOUT_L
+        SpibRegs.SPITXBUF = 0x0000; // Send 16 zeros in order that we receive the 16 GyroZ reading
 
-    // Acknowledge this interrupt to receive more interrupts from group 1
+    //E3
+    //  Clear GPIO66 Low to act as a Slave Select. Right now, just to scope. Later to select MPU9250 chip
+//    GpioDataRegs.GPCCLEAR.bit.GPIO66 = 1;
+//    SpibRegs.SPIFFRX.bit.RXFFIL = 2; // Issue the SPIB_RX_INT when two values are in the RX FIFO
+//    SpibRegs.SPITXBUF = 0x4A3B; // 0x4A3B and 0xB517 have no special meaning. Wanted to send
+//    SpibRegs.SPITXBUF = 0xB517; // something so you can see the pattern on the Oscilloscope
+
+    if (GyroCount % 100 == 0) {
+        UARTPrint = 1;
+    }
+
+    if ((numTimer0calls%250) == 0) {
+        displayLEDletter(LEDdisplaynum);
+        LEDdisplaynum++;
+        if (LEDdisplaynum == 0xFFFF) {  // prevent roll over exception
+            LEDdisplaynum = 0;
+        }
+
+        // Blink LaunchPad Red LED
+        GpioDataRegs.GPBTOGGLE.bit.GPIO34 = 1;
+
+        // Acknowledge this interrupt to receive more interrupts from group 1
+
+    }
+
     PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;
 }
-
 
 // cpu_timer1_isr - CPU Timer1 ISR
 __interrupt void cpu_timer1_isr(void)
@@ -578,4 +571,15 @@ __interrupt void cpu_timer2_isr(void)
     if ((CpuTimer2.InterruptCount % 50) == 0) {
         UARTPrint = 1;
     }
+}
+__interrupt void SPIB_isr(void){
+       GyroCount ++; //CCH - interrupt counter increment
+       spivalue1 = SpibRegs.SPIRXBUF; // Read first 16 bit value off RX FIFO. Probably is zero since no chip
+       spivalue2 = SpibRegs.SPIRXBUF; // Read second 16 bit value off RX FIFO. Again probably zero
+       gyroz_raw = spivalue2; //CCH - set up value for gyroz_raw
+       GpioDataRegs.GPCSET.bit.GPIO66 = 1; // Set GPIO 66 high to end Slave Select. Now to Scope. Later to deselect MPU9250.
+       // Later when actually communicating with the MPU9250 do something with the data. Now do nothing.
+       SpibRegs.SPIFFRX.bit.RXFFOVFCLR = 1; // Clear Overflow flag just in case of an overflow
+       SpibRegs.SPIFFRX.bit.RXFFINTCLR = 1; // Clear RX FIFO Interrupt flag so next interrupt will happen
+       PieCtrlRegs.PIEACK.all = PIEACK_GROUP6; // Acknowledge INT6 PIE interrupt
 }
