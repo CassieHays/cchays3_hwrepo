@@ -32,6 +32,12 @@ __interrupt void cpu_timer1_isr(void);
 __interrupt void cpu_timer2_isr(void);
 __interrupt void SWI_isr(void);
 
+//CCH - HW4 Pasted Code
+__interrupt void xint1_isr(void);
+__interrupt void xint2_isr(void);
+uint32_t Xint1Count=0;
+uint32_t Xint2Count=0;
+
 //CCH - E3 Function Definitions
 void setEPWM8A_RCServo(float angle);
 void setEPWM8B_RCServo(float angle);
@@ -244,6 +250,11 @@ void main(void)
     PieVectTable.SCIC_TX_INT = &TXCINT_data_sent;
     PieVectTable.SCID_TX_INT = &TXDINT_data_sent;
 
+    //CCH - HW4 E4
+    PieVectTable.XINT1_INT = &xint1_isr;
+    PieVectTable.XINT2_INT = &xint2_isr;
+
+
     PieVectTable.EMIF_ERROR_INT = &SWI_isr;
     EDIS;    // This is needed to disable write to EALLOW protected registers
 
@@ -268,24 +279,40 @@ void main(void)
     //    init_serialSCID(&SerialD,115200);
 
     //CCH - E3 EPWM setup
-    EPwm8Regs.TBCTL.bit.CTRMODE = 0; //PRS set count up mode
-    EPwm8Regs.TBCTL.bit.FREE_SOFT = 3; //PRS set free soft emulation mode to free run
-    EPwm8Regs.TBCTL.bit.PHSEN = 0; //PRS do not load time-base counter from time-base phase register
-    EPwm8Regs.TBCTL.bit.CLKDIV = 4; //PRS HW4 E3 set clock divide to divide by 4
-    EPwm8Regs.TBCTR = 0; //PRS start the timer at zero
-    EPwm8Regs.TBPRD = 62500; //PRS set period of PWM signal (5kHz/50MHz = 10000)
-    EPwm8Regs.CMPA.bit.CMPA = 5000; //PRS initially start duty cycle at 50%
-    EPwm8Regs.CMPB.bit.CMPB = 5000; //PRS setting CMPB
-    EPwm8Regs.AQCTLA.bit.CAU = 1; //PRS when TBCTR reaches CAU, set the pin low
-    EPwm8Regs.AQCTLA.bit.ZRO = 2; //PRS when TBCTR is zero, set the pin high
-    EPwm8Regs.AQCTLB.bit.CBU = 1; //PRS Set EPWM8B low on CMPB up
-    EPwm8Regs.AQCTLB.bit.ZRO = 2; //PRS Set EPWM8B high on zero
-    EPwm8Regs.TBPHS.bit.TBPHS = 0; //PRS set the phase to zero with TBPHS
+    EPwm8Regs.TBCTL.bit.CTRMODE = 0; //CCH - set count up mode
+    EPwm8Regs.TBCTL.bit.FREE_SOFT = 3; //CCH - set free soft emulation mode to free run
+    EPwm8Regs.TBCTL.bit.PHSEN = 0; //CCH - do not load time-base counter from time-base phase register
+    EPwm8Regs.TBCTL.bit.CLKDIV = 4; //CCH - HW4 E3 set clock divide to divide by 4
+    EPwm8Regs.TBCTR = 0; //CCH - start the timer at zero
+    EPwm8Regs.TBPRD = 62500; //CCH - set period of PWM signal (5kHz/50MHz = 10000)
+    EPwm8Regs.CMPA.bit.CMPA = 5000; //CCH - initially start duty cycle at 50%
+    EPwm8Regs.CMPB.bit.CMPB = 5000; //CCH - setting CMPB
+    EPwm8Regs.AQCTLA.bit.CAU = 1; //CCH - when TBCTR reaches CAU, set the pin low
+    EPwm8Regs.AQCTLA.bit.ZRO = 2; //CCH - when TBCTR is zero, set the pin high
+    EPwm8Regs.AQCTLB.bit.CBU = 1; //CCH - Set EPWM8B low on CMPB up
+    EPwm8Regs.AQCTLB.bit.ZRO = 2; //CCH - Set EPWM8B high on zero
+    EPwm8Regs.TBPHS.bit.TBPHS = 0; //CCH - set the phase to zero with TBPHS
 
 
     // Configure GPIO pins for EPWM8
-    GPIO_SetupPinMux(14, GPIO_MUX_CPU1, 1); //PRS HW4 E3 EPWM8A on GPIO14
-    GPIO_SetupPinMux(15, GPIO_MUX_CPU1, 1); //PRS HW4 E3 EPWM8B on GPIO15
+    GPIO_SetupPinMux(14, GPIO_MUX_CPU1, 1); //CCH - HW4 E3 EPWM8A on GPIO14
+    GPIO_SetupPinMux(15, GPIO_MUX_CPU1, 1); //CCH - HW4 E3 EPWM8B on GPIO15
+
+    EALLOW;
+    GpioCtrlRegs.GPAQSEL1.bit.GPIO6 = 2; // XINT1 Qual using 6 samples
+    GpioCtrlRegs.GPACTRL.bit.QUALPRD0 = 0xFF; // Each sampling window
+    GpioCtrlRegs.GPAQSEL1.bit.GPIO7 = 2; // XINT2 Qual using 6 samples
+    GpioCtrlRegs.GPACTRL.bit.QUALPRD0 = 0xFF; // Each sampling window is 510*SYSCLKOUT
+    EDIS;
+    // GPIO4 is XINT1, GPIO5 is XINT2
+    GPIO_SetupXINT1Gpio(6);
+    GPIO_SetupXINT2Gpio(7);
+    // Configure XINT1 XINT2
+    XintRegs.XINT1CR.bit.POLARITY = 0; // Falling edge interrupt
+    XintRegs.XINT2CR.bit.POLARITY = 0; // Falling edge interrupt
+    // Enable XINT1 and XINT2
+    XintRegs.XINT1CR.bit.ENABLE = 1; // Enable XINT1
+    XintRegs.XINT2CR.bit.ENABLE = 1; // Enable XINT2
 
     // Disable pull-ups for EPWM pins
     EALLOW;
@@ -309,12 +336,16 @@ void main(void)
     // Enable SWI in the PIE: Group 12 interrupt 9
     PieCtrlRegs.PIEIER12.bit.INTx9 = 1;
 
+    //CCH - HW4 E4
+    PieCtrlRegs.PIEIER1.bit.INTx4 = 1;
+    PieCtrlRegs.PIEIER1.bit.INTx5 = 1;
+
     // Enable global Interrupts and higher priority real-time debug events
     EINT;  // Enable Global interrupt INTM
     ERTM;  // Enable Global realtime interrupt DBGM
 
     // Initialize EPWM8 for RC servos
-//    setupEPWM8();
+    //    setupEPWM8();
 
     // Test servo movement by gradually changing angles
     setEPWM8A_RCServo(0.0f);
@@ -324,7 +355,9 @@ void main(void)
     while(1)
     {
         if (UARTPrint == 1 ) {
-            serial_printf(&SerialA,"Num Timer2:%ld Num SerialRX: %ld\r\n",CpuTimer2.InterruptCount,numRXA);
+            //            serial_printf(&SerialA,"Num Timer2:%ld Num SerialRX: %ld\r\n",CpuTimer2.InterruptCount,numRXA);
+            serial_printf(&SerialA,"NumXInt1=%ld,NumXInt2=%ld\r\n",Xint1Count,Xint2Count);
+
             UARTPrint = 0;
         }
     }
@@ -482,4 +515,18 @@ void setEPWM8B_RCServo(float angle)
 
     // Update compare value
     EPwm8Regs.CMPB.bit.CMPB = (uint16_t)duty_cycle;
+}
+// xint1_isr - External Interrupt 1 ISR
+__interrupt void xint1_isr(void)
+{
+    Xint1Count++;
+    // Acknowledge this interrupt to get more from group 1
+    PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;
+}
+// xint2_isr - External Interrupt 2 ISR
+__interrupt void xint2_isr(void)
+{
+    Xint2Count++;
+    // Acknowledge this interrupt to get more from group 1
+    PieCtrlRegs.PIEACK.all = PIEACK_GROUP1;
 }
